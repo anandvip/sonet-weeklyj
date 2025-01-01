@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weekly Journal</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.8.0/firebase-app-compat.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.8.0/firebase-auth-compat.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.8.0/firebase-firestore-compat.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: #333;
+        }
+
+        .container {
+            display: none; /* Hidden by default, shown after auth */
+            grid-template-columns: 300px 1fr;
+            min-height: 100vh;
+        }
+
+        aside {
+            background: #f5f5f5;
+            padding: 20px;
+            border-right: 1px solid #ddd;
+        }
+
+        .month-select {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 20px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+
+        .entry-list {
+            list-style: none;
+        }
+
+        .entry-list li {
+            padding: 10px;
+            margin-bottom: 5px;
+            background: white;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .entry-list li:hover {
+            background: #eee;
+        }
+
+        .entry-list li.active {
+            background: #007bff;
+            color: white;
+        }
+
+        main {
+            padding: 20px;
+        }
+
+        .editor {
+            width: 100%;
+            min-height: 500px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            resize: vertical;
+        }
+
+        .auth-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #f5f5f5;
+        }
+
+        .auth-box {
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.2s;
+        }
+
+        button:hover {
+            background: #0056b3;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="auth-container" id="authContainer">
+        <div class="auth-box">
+            <h1>Weekly Journal</h1>
+            <p style="margin: 20px 0">Sign in to access your journal</p>
+            <button id="signInButton">Sign in with Google</button>
+        </div>
+    </div>
+
+    <div class="container" id="appContainer">
+        <aside>
+            <div class="header">
+                <select class="month-select" id="monthSelect">
+                    <option value="0">January</option>
+                    <option value="1">February</option>
+                    <option value="2">March</option>
+                    <option value="3">April</option>
+                    <option value="4">May</option>
+                    <option value="5">June</option>
+                    <option value="6">July</option>
+                    <option value="7">August</option>
+                    <option value="8">September</option>
+                    <option value="9">October</option>
+                    <option value="10">November</option>
+                    <option value="11">December</option>
+                </select>
+                <button id="signOutButton">Sign Out</button>
+            </div>
+            <ul class="entry-list" id="entryList"></ul>
+        </aside>
+        <main>
+            <div class="header">
+                <h2 id="currentEntry">Select or create an entry</h2>
+                <button id="saveButton">Save Entry</button>
+            </div>
+            <textarea class="editor" id="editor" placeholder="Write your journal entry here..."></textarea>
+        </main>
+    </div>
+
+    <script>
+        // Firebase configuration - Replace with your config
+        const firebaseConfig = {
+            // Your Firebase config here
+            apiKey: "YOUR_API_KEY",
+            authDomain: "YOUR_AUTH_DOMAIN",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_STORAGE_BUCKET",
+            messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+            appId: "YOUR_APP_ID"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        
+        // DOM Elements
+        const authContainer = document.getElementById('authContainer');
+        const appContainer = document.getElementById('appContainer');
+        const signInButton = document.getElementById('signInButton');
+        const signOutButton = document.getElementById('signOutButton');
+        const monthSelect = document.getElementById('monthSelect');
+        const entryList = document.getElementById('entryList');
+        const editor = document.getElementById('editor');
+        const saveButton = document.getElementById('saveButton');
+        const currentEntry = document.getElementById('currentEntry');
+
+        let currentUser = null;
+        let selectedEntryId = null;
+
+        // Auth state observer
+        auth.onAuthStateChanged((user) => {
+            if (user) {
+                currentUser = user;
+                authContainer.style.display = 'none';
+                appContainer.style.display = 'grid';
+                loadEntries();
+            } else {
+                currentUser = null;
+                authContainer.style.display = 'flex';
+                appContainer.style.display = 'none';
+                editor.value = '';
+                currentEntry.textContent = 'Select or create an entry';
+            }
+        });
+
+        // Sign in with Google
+        signInButton.addEventListener('click', () => {
+            const provider = new firebase.auth.GoogleAuthProvider();
+            auth.signInWithPopup(provider).catch(error => {
+                console.error('Error signing in:', error);
+            });
+        });
+
+        // Sign out
+        signOutButton.addEventListener('click', () => {
+            auth.signOut().catch(error => {
+                console.error('Error signing out:', error);
+            });
+        });
+
+        // Load entries for selected month
+        async function loadEntries() {
+            const selectedMonth = parseInt(monthSelect.value);
+            const entriesRef = db.collection('users')
+                               .doc(currentUser.uid)
+                               .collection('entries');
+            
+            const startDate = new Date(new Date().getFullYear(), selectedMonth, 1);
+            const endDate = new Date(new Date().getFullYear(), selectedMonth + 1, 0);
+            
+            const snapshot = await entriesRef
+                .where('date', '>=', startDate)
+                .where('date', '<=', endDate)
+                .orderBy('date')
+                .get();
+
+            entryList.innerHTML = '';
+            
+            // Add "New Entry" button at the top
+            const newEntryLi = document.createElement('li');
+            newEntryLi.textContent = '+ New Entry';
+            newEntryLi.addEventListener('click', createNewEntry);
+            entryList.appendChild(newEntryLi);
+
+            snapshot.forEach(doc => {
+                const entry = doc.data();
+                const li = document.createElement('li');
+                li.textContent = new Date(entry.date.toDate()).toLocaleDateString();
+                li.addEventListener('click', () => loadEntry(doc.id));
+                entryList.appendChild(li);
+            });
+        }
+
+        // Create new entry
+        async function createNewEntry() {
+            const selectedMonth = parseInt(monthSelect.value);
+            const today = new Date();
+            today.setMonth(selectedMonth);
+            
+            const entry = {
+                date: firebase.firestore.Timestamp.fromDate(today),
+                content: ''
+            };
+
+            try {
+                const docRef = await db.collection('users')
+                    .doc(currentUser.uid)
+                    .collection('entries')
+                    .add(entry);
+                
+                selectedEntryId = docRef.id;
+                editor.value = '';
+                currentEntry.textContent = today.toLocaleDateString();
+                loadEntries();
+            } catch (error) {
+                console.error('Error creating entry:', error);
+            }
+        }
+
+        // Load specific entry
+        async function loadEntry(entryId) {
+            try {
+                const doc = await db.collection('users')
+                    .doc(currentUser.uid)
+                    .collection('entries')
+                    .doc(entryId)
+                    .get();
+
+                if (doc.exists) {
+                    const entry = doc.data();
+                    editor.value = entry.content || '';
+                    currentEntry.textContent = new Date(entry.date.toDate()).toLocaleDateString();
+                    selectedEntryId = entryId;
+                }
+            } catch (error) {
+                console.error('Error loading entry:', error);
+            }
+        }
+
+        // Save entry
+        saveButton.addEventListener('click', async () => {
+            if (!selectedEntryId) return;
+
+            try {
+                await db.collection('users')
+                    .doc(currentUser.uid)
+                    .collection('entries')
+                    .doc(selectedEntryId)
+                    .update({
+                        content: editor.value
+                    });
+                
+                alert('Entry saved successfully!');
+            } catch (error) {
+                console.error('Error saving entry:', error);
+                alert('Error saving entry');
+            }
+        });
+
+        // Month change handler
+        monthSelect.addEventListener('change', loadEntries);
+
+        // Set initial month
+        monthSelect.value = new Date().getMonth();
+    </script>
+</body>
+</html>
